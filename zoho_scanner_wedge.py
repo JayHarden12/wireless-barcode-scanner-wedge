@@ -633,15 +633,36 @@ def handle_shutdown():
     return jsonify({"status": "success", "message": "Server stopped successfully."})
 
 
+MODES = ["tab_typing", "clipboard_paste", "raw_typing"]
+
+
+def config_error(message):
+    return jsonify({"status": "error", "message": message, "config": CONFIG}), 400
+
+
 @app.route('/api/config', methods=['POST'])
 def update_config():
-    data = request.get_json(silent=True) or {}
-    if "mode" in data and data["mode"] in ["tab_typing", "clipboard_paste", "raw_typing"]:
-        CONFIG["mode"] = data["mode"]
+    """Change typing settings. Every value is checked first, so a bad request changes nothing."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return config_error("Send the settings as a JSON object.")
+
+    changes = {}
+    if "mode" in data:
+        if data["mode"] not in MODES:
+            return config_error(f"Unknown mode {data['mode']!r}. Use one of: {', '.join(MODES)}.")
+        changes["mode"] = data["mode"]
     if "press_enter_at_end" in data:
-        CONFIG["press_enter_at_end"] = bool(data["press_enter_at_end"])
+        if not isinstance(data["press_enter_at_end"], bool):
+            return config_error("press_enter_at_end must be true or false.")
+        changes["press_enter_at_end"] = data["press_enter_at_end"]
     if "keystroke_delay" in data:
-        CONFIG["keystroke_delay"] = float(data["keystroke_delay"])
+        delay = data["keystroke_delay"]
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)) or not 0 <= delay <= 1:
+            return config_error("keystroke_delay must be a number of seconds from 0 to 1.")
+        changes["keystroke_delay"] = float(delay)
+
+    CONFIG.update(changes)
     return jsonify({"status": "success", "config": CONFIG})
 
 
@@ -863,14 +884,14 @@ body {
             <div class="form-group">
                 <label class="form-label">Injection Mode</label>
                 <select id="config-mode" class="form-control" onchange="saveConfig()">
-                    <option value="tab_typing" selected>Smart Tab Typing (Types text, presses Tab between fields, Enter at end)</option>
-                    <option value="clipboard_paste">Fast Clipboard Paste (Copies tabbed string & presses Cmd+V)</option>
-                    <option value="raw_typing">Raw Keystroke Typing (Types string as-is)</option>
+                    <option value="tab_typing" {{ 'selected' if config.mode == 'tab_typing' }}>Smart Tab Typing (Types text, presses Tab between fields, Enter at end)</option>
+                    <option value="clipboard_paste" {{ 'selected' if config.mode == 'clipboard_paste' }}>Fast Clipboard Paste (Copies tabbed string & presses Cmd+V)</option>
+                    <option value="raw_typing" {{ 'selected' if config.mode == 'raw_typing' }}>Raw Keystroke Typing (Types string as-is)</option>
                 </select>
             </div>
             <div class="form-group">
                 <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
-                    <input type="checkbox" id="config-enter" checked onchange="saveConfig()">
+                    <input type="checkbox" id="config-enter" {{ 'checked' if config.press_enter_at_end }} onchange="saveConfig()">
                     <span>Press Return/Enter after each scan (moves cursor to next Excel row)</span>
                 </label>
             </div>
@@ -1017,7 +1038,8 @@ function escapeHtml(text) {
 </body>
 </html>
 """
-    return render_template_string(template, local_ip=LOCAL_IP, port=PORT)
+    # The mode list and Enter box show the settings the server is actually using
+    return render_template_string(template, local_ip=LOCAL_IP, port=PORT, config=CONFIG)
 
 
 # ==================== MAIN LAUNCHER ====================
